@@ -1,0 +1,10 @@
+{
+	"name": "yarn",
+	"authors": [
+		"Jack Stouffer"
+	],
+	"description": "custom string type",
+	"copyright": "Copyright © 2018, Jack Stouffer",
+	"license": "BSL-1.0",
+    "targetType": "library"
+}

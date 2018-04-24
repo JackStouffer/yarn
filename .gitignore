@@ -1,0 +1,14 @@
+.dub
+docs.json
+__dummy.html
+docs/
+yarn.so
+yarn.dylib
+yarn.dll
+yarn.a
+yarn.lib
+yarn-test-*
+*.exe
+*.o
+*.obj
+*.lst
