@@ -57,10 +57,18 @@ struct Yarn
     }
 
     ///
-    ref opOpAssign(string op, Input)(Input inp)
-    if (op == "~" && isInputRange!Input && isSomeChar!(ElementType!Input))
+    ref opOpAssign(string op, R)(R r)
+    if (op == "~" && isInputRange!R && isSomeChar!(ElementType!R))
     {
-        foreach (ch; inp)
+        static if (hasLength!R || isNarrowString!R)
+        {
+            if (!isBig && r.length + small.slen > smallCapacity)
+            {
+                convertToBig();
+            }
+        }
+
+        foreach (ch; r)
         {
             this ~= ch;
         }
@@ -139,10 +147,21 @@ struct Yarn
         size_t padding;
     }
 
-    private static struct Small
+    version(LittleEndian)
     {
-        char[smallCapacity] data;
-        ubyte slen;
+        private static struct Small
+        {
+            char[smallCapacity] data;
+            ubyte slen;
+        }
+    }
+    else
+    {
+        private static struct Small
+        {
+            ubyte slen;
+            char[smallCapacity] data;
+        }
     }
 
     private union
@@ -164,8 +183,15 @@ unittest
     a ~= " test test test test test";
     a ~= " test test test test test";
     assert(a == "test test test test test test test test test test test test test test test test test");
+
+    // test construction with a string that triggers conversion to large
+    auto b = Yarn("000000000000000000000000000000000000000000000000");
+    assert(b == "000000000000000000000000000000000000000000000000");
 }
 
+/*
+Returns the proper allocation attribute for T
+ */
 private template blockAttribute(T)
 {
     import core.memory;
