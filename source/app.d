@@ -21,7 +21,7 @@ struct Yarn
     if (op == "~")
     {
         import core.exception : onOutOfMemoryError;
-        import core.memory : pureRealloc;
+        import core.memory : GC;
 
         if (!isBig)
         {
@@ -41,21 +41,16 @@ struct Yarn
         if (large.len == large.capacity)
         {
             import core.checkedint : addu, mulu;
+            import core.stdc.string : memcpy;
             bool overflow;
             large.capacity = addu(large.capacity, grow, overflow);
-            auto nelems = mulu(3, addu(large.capacity, 1, overflow), overflow);
-
+            auto nelems = mulu(large.capacity, char.sizeof, overflow);
             if (overflow)
             {
                 assert(0);
             }
 
-            large.ptr = cast(char*) pureRealloc(large.ptr, nelems);
-
-            if (large.ptr is null)
-            {
-                onOutOfMemoryError();
-            }
+            large.ptr = cast(char*) GC.realloc(large.ptr, nelems, blockAttribute!(char));
         }
         large.ptr[large.len++] = ch;
         return this;
@@ -72,6 +67,7 @@ struct Yarn
         return this;
     }
 
+    ///
     bool opEquals(string rhs)
     {
         if (isBig)
@@ -82,47 +78,45 @@ struct Yarn
         return small.data[0 .. small.slen] == rhs;
     }
 
-    size_t length() @property
+    ///
+    string toString()
     {
-        return isBig ? large.len : small.slen & 0x7F;
+        import std.exception : assumeUnique;
+        if (isBig)
+        {
+            return large.ptr[0 .. large.len].assumeUnique;
+        }
+        return small.data[0 .. small.slen].assumeUnique;
     }
 
-    version(X86_64)
-        enum smallCapacity = 31;
-    else
-        enum smallCapacity = 15;
+    private enum smallCapacity = 31;
+    private enum small_flag = 0x80, small_mask = 0x7F;
+    private enum grow = 40;
 
-    enum small_flag = 0x80, small_mask = 0x7F;
-    enum grow = 40;
-
-    void setBig() @nogc nothrow pure
+    private void setBig() @safe @nogc nothrow pure
     {
         small.slen |= small_flag;
     }
 
-    @property size_t smallLength() const @nogc nothrow pure
+    private size_t smallLength() @property const @nogc nothrow pure
     {
         return small.slen & small_mask;
     }
 
-    @property ubyte isBig() const @nogc nothrow pure
+    private ubyte isBig() @property const @nogc nothrow pure
     {
         return small.slen & small_flag;
     }
 
-    void convertToBig()
+    private void convertToBig()
     {
-        import core.exception : onOutOfMemoryError;
-        import core.memory : pureMalloc;
+        import core.memory : GC;
 
         static assert(grow.max / 3 - 1 >= grow);
 
         enum nbytes = 3 * (grow + 1);
         immutable size_t k = smallLength;
-        char* p = cast(char*) pureMalloc(nbytes);
-
-        if (p is null)
-            onOutOfMemoryError();
+        char* p = cast(char*) GC.malloc(nbytes, blockAttribute!(char));
 
         for (int i = 0; i < k; i++)
         {
@@ -137,34 +131,24 @@ struct Yarn
         setBig();
     }
 
-    static struct Large
+    private static struct Large
     {
         char* ptr;
         size_t capacity;
         size_t len;
-        size_t padding_;
+        size_t padding;
     }
 
-    static struct Small
+    private static struct Small
     {
-        ubyte slen;
         char[smallCapacity] data;
+        ubyte slen;
     }
 
-    union
+    private union
     {
         Large large;
         Small small;
-    }
-
-    string toString()
-    {
-        import std.exception : assumeUnique;
-        if (isBig)
-        {
-            return large.ptr[0 .. large.len].assumeUnique;
-        }
-        return small.data[0 .. small.slen].assumeUnique;
     }
 }
 
@@ -177,5 +161,20 @@ unittest
     assert(a == "test test");
 
     a ~= " test test test test test";
-    assert(a == "test test test test test test test");
+    a ~= " test test test test test";
+    a ~= " test test test test test";
+    assert(a == "test test test test test test test test test test test test test test test test test");
+}
+
+private template blockAttribute(T)
+{
+    import core.memory;
+    static if (hasIndirections!(T) || is(T == void))
+    {
+        enum blockAttribute = 0;
+    }
+    else
+    {
+        enum blockAttribute = GC.BlkAttr.NO_SCAN;
+    }
 }
