@@ -17,43 +17,53 @@ struct Yarn
     }
 
     ///
-    ref opOpAssign(string op)(char ch)
-    if (op == "~")
+    ref opOpAssign(string op, Char)(Char ch)
+    if (op == "~" && isSomeChar!(Char))
     {
-        import core.exception : onOutOfMemoryError;
-        import core.memory : GC;
-
-        if (!isBig)
+        static if (is(Unqual!Char == char))
         {
-            if (small.slen == smallCapacity)
-            {
-                convertToBig();
-            }
-            else
-            {
-                small.data[small.slen] = ch;
-                small.slen++;
-                return this;
-            }
-        }
+            import core.exception : onOutOfMemoryError;
+            import core.memory : GC;
 
-        assert(isBig);
-        if (large.len == large.capacity)
+            if (!isBig)
+            {
+                if (small.slen == smallCapacity)
+                {
+                    convertToBig();
+                }
+                else
+                {
+                    small.data[small.slen] = ch;
+                    small.slen++;
+                    return this;
+                }
+            }
+
+            assert(isBig);
+            if (large.len == large.capacity)
+            {
+                import core.checkedint : addu, mulu;
+                import core.stdc.string : memcpy;
+                bool overflow;
+                large.capacity = addu(large.capacity, grow, overflow);
+                auto nelems = mulu(large.capacity, char.sizeof, overflow);
+                if (overflow)
+                {
+                    assert(0);
+                }
+
+                large.ptr = cast(char*) GC.realloc(large.ptr, nelems, blockAttribute!(char));
+            }
+            large.ptr[large.len++] = ch;
+            return this;
+        }
+        else static if (is(Unqual!Char == wchar) || is(Unqual!Char == dchar))
         {
-            import core.checkedint : addu, mulu;
-            import core.stdc.string : memcpy;
-            bool overflow;
-            large.capacity = addu(large.capacity, grow, overflow);
-            auto nelems = mulu(large.capacity, char.sizeof, overflow);
-            if (overflow)
-            {
-                assert(0);
-            }
-
-            large.ptr = cast(char*) GC.realloc(large.ptr, nelems, blockAttribute!(char));
+            import std.utf : encode;
+            char[4] buf;
+            size_t i = encode(buf, ch);
+            return opOpAssign!("~")(buf[0 .. i]);
         }
-        large.ptr[large.len++] = ch;
-        return this;
     }
 
     ///
@@ -73,6 +83,13 @@ struct Yarn
             this ~= ch;
         }
         return this;
+    }
+
+    ///
+    void put(R)(R r)
+    if (isSomeChar!(R) || (isInputRange!(R) && isSomeChar!(ElementType!(R))))
+    {
+        this ~= r;
     }
 
     ///
@@ -139,20 +156,26 @@ struct Yarn
         setBig();
     }
 
-    private static struct Large
-    {
-        char* ptr;
-        size_t capacity;
-        size_t len;
-        size_t padding;
-    }
-
     version(LittleEndian)
     {
         private static struct Small
         {
             char[smallCapacity] data;
             ubyte slen;
+        }
+
+        private static struct Large
+        {
+            char* ptr;
+            size_t capacity;
+            size_t len;
+            size_t padding;
+        }
+
+        private union
+        {
+            Large large;
+            Small small;
         }
     }
     else
@@ -162,12 +185,20 @@ struct Yarn
             ubyte slen;
             char[smallCapacity] data;
         }
-    }
 
-    private union
-    {
-        Large large;
-        Small small;
+        private static struct Large
+        {
+            size_t padding;
+            size_t len;
+            size_t capacity;
+            char* ptr;
+        }
+
+        private union
+        {
+            Small small;
+            Large large;
+        }
     }
 }
 
@@ -187,6 +218,24 @@ unittest
     // test construction with a string that triggers conversion to large
     auto b = Yarn("000000000000000000000000000000000000000000000000");
     assert(b == "000000000000000000000000000000000000000000000000");
+}
+
+// test encoding on ctor and append
+unittest
+{
+    wstring w = "øōôòœõ";
+    Yarn y1 = Yarn(w);
+    assert(y1 == "øōôòœõ");
+    Yarn y2;
+    y2 ~= w;
+    assert(y2 == "øōôòœõ");
+
+    dstring d = "𐐷𐐸𐐺𐐾";
+    Yarn y3 = Yarn(d);
+    assert(y3 == "𐐷𐐸𐐺𐐾");
+    Yarn y4;
+    y4 ~= d;
+    assert(y4 == "𐐷𐐸𐐺𐐾");
 }
 
 /*
