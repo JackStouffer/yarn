@@ -5,7 +5,8 @@ import std.range.primitives;
 import std.stdio;
 
 /**
- * Small size optimized string.
+ * Custom `string` type optimized for both small sizes and for appending
+ * large amounts of data.
  */
 struct Yarn
 {
@@ -16,13 +17,19 @@ struct Yarn
         this ~= chars;
     }
 
-    ///
+    /**
+     * Appends.
+     *
+     * Throws:
+     *     UTFException on bad utf data.
+     *     OutOfMemory when allocation fails.
+     */
     ref opOpAssign(string op, Char)(Char ch)
     if (op == "~" && isSomeChar!(Char))
     {
         static if (is(Unqual!Char == char))
         {
-            import core.exception : onOutOfMemoryError;
+            import core.checkedint : addu, mulu;
             import core.memory : GC;
 
             if (!isBig)
@@ -42,22 +49,12 @@ struct Yarn
             assert(isBig);
             if (large.len == large.capacity)
             {
-                import core.checkedint : addu, mulu;
-                import core.stdc.string : memcpy;
-                bool overflow;
-                large.capacity = addu(large.capacity, grow, overflow);
-                auto nelems = mulu(large.capacity, char.sizeof, overflow);
-                if (overflow)
-                {
-                    assert(0);
-                }
-
-                large.ptr = cast(char*) GC.realloc(large.ptr, nelems, blockAttribute!(char));
+                extend(1);
             }
             large.ptr[large.len++] = ch;
             return this;
         }
-        else static if (is(Unqual!Char == wchar) || is(Unqual!Char == dchar))
+        else
         {
             import std.utf : encode;
             char[4] buf;
@@ -66,7 +63,7 @@ struct Yarn
         }
     }
 
-    ///
+    /// ditto
     ref opOpAssign(string op, R)(R r)
     if (op == "~" && isInputRange!R && isSomeChar!(ElementType!R))
     {
@@ -75,6 +72,20 @@ struct Yarn
             if (!isBig && r.length + small.slen > smallCapacity)
             {
                 convertToBig();
+            }
+            else if (isBig)
+            {
+                reserve(r.length);
+            }
+        }
+        else
+        {
+            if (isBig)
+            {
+                // Take an educated guess.
+                // Could get the walk length if it's a forward range,
+                // but that assumes popping is cheap
+                extend(8);
             }
         }
 
@@ -114,9 +125,17 @@ struct Yarn
         return small.data[0 .. small.slen].assumeUnique;
     }
 
+    /**
+    Allocate space for `newCapacity` elements.
+     */
+    void reserve(size_t newCapacity)
+    {
+        if (isBig && newCapacity > large.capacity)
+            extend(newCapacity - large.len);
+    }
+
     private enum smallCapacity = 31;
     private enum small_flag = 0x80, small_mask = 0x7F;
-    private enum grow = 40;
 
     private void setBig() @safe @nogc nothrow pure
     {
@@ -133,13 +152,14 @@ struct Yarn
         return small.slen & small_flag;
     }
 
+    /*
+    Allocates a new array on the GC and copies the small data to it.
+     */
     private void convertToBig()
     {
         import core.memory : GC;
 
-        static assert(grow.max / 3 - 1 >= grow);
-
-        enum nbytes = 3 * (grow + 1);
+        immutable nbytes = (smallLength + 1) * char.sizeof;
         immutable size_t k = smallLength;
         char* p = cast(char*) GC.malloc(nbytes, blockAttribute!(char));
 
@@ -148,12 +168,49 @@ struct Yarn
             p[i] = small.data[i];
         }
 
-        // now we can overwrite small array data
         large.ptr = p;
         large.len = k;
-        assert(grow > large.len);
-        large.capacity = grow;
+        large.capacity = smallLength + 1;
         setBig();
+    }
+
+    /*
+    Allocates space for n extra elements. If capacity can hold n more
+    elements does nothing.
+     */
+    private void extend(size_t n)
+    {
+        import core.checkedint : mulu;
+        import core.memory : GC;
+        import core.stdc.string : memcpy;
+
+        assert(isBig);
+        immutable len = large.len;
+        immutable reqlen = len + n;
+
+        if (large.capacity >= reqlen)
+            return;
+
+        immutable u = GC.extend(large.ptr, n * char.sizeof, (reqlen - len) * char.sizeof);
+        if (u)
+        {
+            // extend worked, update the capacity
+            large.capacity = u / char.sizeof;
+            writeln("extend");
+            return;
+        }
+
+        // didn't work, must reallocate
+        bool overflow;
+        const nbytes = mulu(reqlen, char.sizeof, overflow);
+        if (overflow) assert(0);
+
+        auto bi = GC.qalloc(nbytes, blockAttribute!char);
+        large.capacity = bi.size / char.sizeof;
+        if (len)
+            memcpy(bi.base, large.ptr, len * char.sizeof);
+        large.ptr = cast(char*) bi.base;
+        large.len = len;
     }
 
     version(LittleEndian)
