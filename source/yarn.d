@@ -29,9 +29,6 @@ struct Yarn
     {
         static if (is(Unqual!Char == char))
         {
-            import core.checkedint : addu, mulu;
-            import core.memory : GC;
-
             if (!isBig)
             {
                 if (small.slen == smallCapacity)
@@ -59,7 +56,11 @@ struct Yarn
             import std.utf : encode;
             char[4] buf;
             size_t i = encode(buf, ch);
-            return opOpAssign!("~")(buf[0 .. i]);
+            foreach (j; 0 .. i)
+            {
+                this ~= buf[j];
+            }
+            return this;
         }
     }
 
@@ -69,9 +70,9 @@ struct Yarn
     {
         static if (hasLength!R || isNarrowString!R)
         {
-            if (!isBig && r.length + small.slen > smallCapacity)
+            if (!isBig && r.length + smallLength > smallCapacity)
             {
-                convertToBig();
+                convertToBig(r.length);
             }
             else if (isBig)
             {
@@ -89,9 +90,20 @@ struct Yarn
             }
         }
 
-        foreach (ch; r)
+        static if (isNarrowString!R)
         {
-            this ~= ch;
+            alias E = ElementEncodingType!R;
+            foreach (E ch; r)
+            {
+                this ~= ch;
+            }
+        }
+        else
+        {
+            for (; !r.empty; r.popFront)
+            {
+                this ~= r.front;
+            }
         }
         return this;
     }
@@ -203,13 +215,26 @@ struct Yarn
     /*
     Allocates a new array on the GC and copies the small data to it.
      */
-    private void convertToBig()
+    private void convertToBig(size_t cap = smallCapacity + 1)
     {
         import core.memory : GC;
+        import std.algorithm.comparison : max;
 
-        immutable nbytes = (smallLength + 1) * char.sizeof;
+        static size_t roundUpToMultipleOf(size_t s, ulong base)
+        {
+            assert(base);
+            auto rem = s % base;
+            return rem ? s + base - rem : s;
+        }
+
+        // copy stdx.allocator behavior
+        immutable nbytes = roundUpToMultipleOf(
+            cap * char.sizeof,
+            max(double.alignof, real.alignof)
+        );
+
         immutable size_t k = smallLength;
-        char* p = cast(char*) GC.malloc(nbytes, blockAttribute!(char));
+        char* p = cast(char*) GC.malloc(nbytes, GC.BlkAttr.NO_SCAN | GC.BlkAttr.APPENDABLE);
 
         for (int i = 0; i < k; i++)
         {
@@ -218,7 +243,7 @@ struct Yarn
 
         large.ptr = p;
         large.len = k;
-        large.capacity = smallLength + 1;
+        large.capacity = nbytes / char.sizeof;
         setBig();
     }
 
@@ -239,7 +264,7 @@ struct Yarn
         if (large.capacity >= reqlen)
             return;
 
-        immutable u = GC.extend(large.ptr, n * char.sizeof, (reqlen - len) * char.sizeof);
+        immutable u = GC.extend(large.ptr, n * char.sizeof, ((reqlen - len) * char.sizeof) + 31);
         if (u)
         {
             // extend worked, update the capacity
@@ -252,12 +277,12 @@ struct Yarn
         const nbytes = mulu(reqlen, char.sizeof, overflow);
         if (overflow) assert(0);
 
-        auto bi = GC.qalloc(nbytes, blockAttribute!char);
-        large.capacity = bi.size / char.sizeof;
-        if (len)
-            memcpy(bi.base, large.ptr, len * char.sizeof);
-        large.ptr = cast(char*) bi.base;
-        large.len = len;
+        large.ptr = cast(char*) GC.realloc(
+            large.ptr,
+            nbytes,
+            GC.BlkAttr.NO_SCAN | GC.BlkAttr.APPENDABLE
+        );
+        large.capacity = reqlen;
     }
 
     version(LittleEndian)
