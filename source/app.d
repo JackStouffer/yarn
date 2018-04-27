@@ -40,7 +40,7 @@ struct Yarn
                 }
                 else
                 {
-                    small.data[small.slen] = ch;
+                    small.data[smallLength] = ch;
                     small.slen++;
                     return this;
                 }
@@ -103,28 +103,6 @@ struct Yarn
         this ~= r;
     }
 
-    ///
-    bool opEquals(string rhs)
-    {
-        if (isBig)
-        {
-            return large.ptr[0 .. large.len] == rhs;
-        }
-
-        return small.data[0 .. small.slen] == rhs;
-    }
-
-    ///
-    string toString()
-    {
-        import std.exception : assumeUnique;
-        if (isBig)
-        {
-            return large.ptr[0 .. large.len].assumeUnique;
-        }
-        return small.data[0 .. small.slen].assumeUnique;
-    }
-
     /**
     Allocate space for `newCapacity` elements.
      */
@@ -132,6 +110,76 @@ struct Yarn
     {
         if (isBig && newCapacity > large.capacity)
             extend(newCapacity - large.len);
+    }
+
+    /**
+    Returns: The data as a random access range of code units.
+     */
+    auto byCodeUnit()
+    {
+        import std.utf : byCodeUnit;
+
+        if (isBig)
+        {
+            return large.ptr[0 .. large.len].byCodeUnit;
+        }
+        else
+        {
+            return small.data[0 .. smallLength].byCodeUnit;
+        }
+    }
+
+    /**
+    Returns: The data as a random access range of code units.
+     */
+    auto byChar()
+    {
+        return byCodeUnit;
+    }
+
+    /**
+    Returns: The data as a forward range of `wchars`
+     */
+    auto byWchar()
+    {
+        import std.utf : byWchar;
+
+        if (isBig)
+        {
+            return large.ptr[0 .. large.len].byWchar;
+        }
+        else
+        {
+            return small.data[0 .. smallLength].byWchar;
+        }
+    }
+
+    /**
+    Returns: The data as a bidirectional range of code points.
+     */
+    auto byDchar()
+    {
+        // custom because byUTF is bidirectional
+        static struct Result(R)
+        {
+            R data;
+
+            auto front() { return data.front; }
+            void popFront() { data.popFront; }
+            bool empty() { return data.empty; }
+            auto back() { return data.back; }
+            void popBack() { data.popBack; }
+            auto save() { return Result!(R)(data.save); }
+        }
+
+        if (isBig)
+        {
+            return Result!(char[])(large.ptr[0 .. large.len]);
+        }
+        else
+        {
+            return Result!(char[])(small.data[0 .. smallLength]);
+        }
     }
 
     private enum smallCapacity = 31;
@@ -196,7 +244,6 @@ struct Yarn
         {
             // extend worked, update the capacity
             large.capacity = u / char.sizeof;
-            writeln("extend");
             return;
         }
 
@@ -261,38 +308,62 @@ struct Yarn
 
 unittest
 {
+    import std.algorithm.comparison : equal;
+
     auto a = Yarn("test");
-    assert(a == "test");
+    assert(a.byCodeUnit.equal("test"));
 
     a ~= " test";
-    assert(a == "test test");
+    assert(a.byCodeUnit.equal("test test"));
 
     a ~= " test test test test test";
     a ~= " test test test test test";
     a ~= " test test test test test";
-    assert(a == "test test test test test test test test test test test test test test test test test");
+    assert(a.byCodeUnit.equal("test test test test test test test test test test test test test test test test test"));
 
     // test construction with a string that triggers conversion to large
     auto b = Yarn("000000000000000000000000000000000000000000000000");
-    assert(b == "000000000000000000000000000000000000000000000000");
+    assert(b.byCodeUnit.equal("000000000000000000000000000000000000000000000000"));
 }
 
 // test encoding on ctor and append
 unittest
 {
+    import std.algorithm.comparison : equal;
+    import std.range : retro;
+
     wstring w = "øōôòœõ";
     Yarn y1 = Yarn(w);
-    assert(y1 == "øōôòœõ");
+    assert(y1.byDchar.equal("øōôòœõ"));
     Yarn y2;
     y2 ~= w;
-    assert(y2 == "øōôòœõ");
+    assert(y2.byDchar.equal("øōôòœõ"));
 
-    dstring d = "𐐷𐐸𐐺𐐾";
+    dstring d = "𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾";
     Yarn y3 = Yarn(d);
-    assert(y3 == "𐐷𐐸𐐺𐐾");
+    assert(y3.byDchar.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾"));
     Yarn y4;
     y4 ~= d;
-    assert(y4 == "𐐷𐐸𐐺𐐾");
+    assert(y4.byDchar.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾"));
+    assert(y4.byDchar.retro.equal("𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷"));
+}
+
+unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.string : assumeUTF;
+
+    Yarn y1 = Yarn("𐐷𐐸𐐺𐐾");
+
+    ubyte[] s1 = [0xF0, 0x90, 0x90, 0xB7, 0xF0, 0x90, 0x90, 0xB8,
+                  0xF0, 0x90, 0x90, 0xBA, 0xF0, 0x90, 0x90, 0xBE];
+    assert(y1.byChar.equal(s1.assumeUTF));
+
+    ushort[] s2 = [0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E];
+    assert(y1.byWchar.equal(s2.assumeUTF));
+
+    uint[] s3 = [0x10437, 0x10438, 0x1043A, 0x1043E];
+    assert(y1.byDchar.equal(s3.assumeUTF));
 }
 
 /*
