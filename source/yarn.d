@@ -72,40 +72,54 @@ struct Yarn
         {
             if (!isBig && r.length + smallLength > smallCapacity)
             {
-                convertToBig(r.length);
+                convertToBig(r.length + smallLength);
             }
             else if (isBig)
             {
-                reserve(r.length);
+                extend(r.length);
+            }
+
+            alias E = Unqual!(ElementEncodingType!R);
+            static if (isNarrowString!R && is(E == char))
+            {
+                if (isBig)
+                {
+                    large.ptr[large.len .. large.len + r.length] = r;
+                    large.len += r.length;
+                }
+                else
+                {
+                    small.data[smallLength .. smallLength + r.length] = r;
+                    small.slen += r.length;
+                }
+
+                return this;
+            }
+            else
+            {
+                foreach (E ch; r)
+                {
+                    this ~= ch;
+                }
+                return this;
             }
         }
         else
         {
-            if (isBig)
+            if (isBig && large.capacity - large.len < 8)
             {
                 // Take an educated guess.
                 // Could get the walk length if it's a forward range,
                 // but that assumes popping is cheap
                 extend(8);
             }
-        }
 
-        static if (isNarrowString!R)
-        {
-            alias E = ElementEncodingType!R;
-            foreach (E ch; r)
-            {
-                this ~= ch;
-            }
-        }
-        else
-        {
             for (; !r.empty; r.popFront)
             {
                 this ~= r.front;
             }
+            return this;
         }
-        return this;
     }
 
     ///
@@ -121,7 +135,9 @@ struct Yarn
     void reserve(size_t newCapacity)
     {
         if (isBig && newCapacity > large.capacity)
+        {
             extend(newCapacity - large.len);
+        }
     }
 
     /**
@@ -171,7 +187,7 @@ struct Yarn
      */
     auto byDchar()
     {
-        // custom because byUTF is bidirectional
+        // custom because byUTF is not bidirectional
         static struct Result(R)
         {
             R data;
@@ -218,6 +234,7 @@ struct Yarn
     private void convertToBig(size_t cap = smallCapacity + 1)
     {
         import core.memory : GC;
+        import core.stdc.string : memcpy;
         import std.algorithm.comparison : max;
 
         static size_t roundUpToMultipleOf(size_t s, ulong base)
@@ -236,11 +253,7 @@ struct Yarn
         immutable size_t k = smallLength;
         char* p = cast(char*) GC.malloc(nbytes, GC.BlkAttr.NO_SCAN | GC.BlkAttr.APPENDABLE);
 
-        for (int i = 0; i < k; i++)
-        {
-            p[i] = small.data[i];
-        }
-
+        memcpy(p, small.data.ptr, k);
         large.ptr = p;
         large.len = k;
         large.capacity = nbytes / char.sizeof;
@@ -264,7 +277,7 @@ struct Yarn
         if (large.capacity >= reqlen)
             return;
 
-        immutable u = GC.extend(large.ptr, n * char.sizeof, ((reqlen - len) * char.sizeof) + 31);
+        immutable u = GC.extend(large.ptr, n * char.sizeof, (reqlen - len) * char.sizeof);
         if (u)
         {
             // extend worked, update the capacity
