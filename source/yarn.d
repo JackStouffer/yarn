@@ -376,7 +376,10 @@ struct Yarn
 
 unittest
 {
+    import std.algorithm.iteration : map;
     import std.algorithm.comparison : equal;
+    import std.internal.test.dummyrange : DummyRange, ReturnBy, Length, RangeType, ReferenceForwardRange;
+    import std.range : repeat;
 
     auto a = Yarn("test");
     assert(a.byCodeUnit.equal("test"));
@@ -392,6 +395,15 @@ unittest
     // test construction with a string that triggers conversion to large
     auto b = Yarn("000000000000000000000000000000000000000000000000");
     assert(b.byCodeUnit.equal("000000000000000000000000000000000000000000000000"));
+
+    auto r1 = map!(a => cast(char) (a + 47))(DummyRange!(ReturnBy.Value, Length.No, RangeType.Input)());
+    Yarn c = Yarn(r1);
+    assert(c.byCodeUnit.equal("0123456789"));
+    auto r2 = map!(a => cast(char) (a + '0'))(new ReferenceForwardRange!int(0.repeat(30)));
+    c ~= r2.save;
+    assert(c.byCodeUnit.equal("0123456789000000000000000000000000000000"));
+    c ~= r2.save;
+    assert(c.byCodeUnit.equal("0123456789000000000000000000000000000000000000000000000000000000000000"));
 }
 
 // test encoding on ctor and append
