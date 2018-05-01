@@ -2,12 +2,16 @@
 docs.json
 __dummy.html
 docs/
+yarn
+bench
+libyarn.a
 yarn.so
 yarn.dylib
 yarn.dll
 yarn.a
 yarn.lib
 yarn-test-*
+trace.*
 *.exe
 *.o
 *.obj
