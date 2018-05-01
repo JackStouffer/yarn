@@ -2,10 +2,10 @@ module yarn;
 
 import std.traits;
 import std.range.primitives;
-import std.stdio;
+version(unittest) import std.stdio;
 
 /**
-Custom `string` type optimized for both small sizes and for appending
+A safe `string` type optimized for both small sizes and for appending
 large amounts of data.
 
 Specifically designed to not be compatible with built-in `string` types.
@@ -37,7 +37,7 @@ struct Yarn
     Throws:
         `UTFException` on bad utf data. `OutOfMemory` when allocation fails.
      */
-    ref opOpAssign(string op, Char)(Char ch)
+    ref opOpAssign(string op, Char)(Char ch) @trusted pure
     if (op == "~" && isSomeChar!(Char))
     {
         static if (is(Unqual!Char == char))
@@ -78,10 +78,49 @@ struct Yarn
     }
 
     /// ditto
-    ref opOpAssign(string op, R)(R r)
-    if (op == "~" && isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
+    ref opOpAssign(string op, S)(S s) @trusted pure
+    if (op == "~" && isNarrowString!S)
     {
-        static if (hasLength!R || isNarrowString!R)
+        if (!isBig && s.length + smallLength > smallCapacity)
+        {
+            convertToBig(s.length + smallLength);
+        }
+        else if (isBig)
+        {
+            extend(s.length);
+        }
+
+        alias E = Unqual!(ElementEncodingType!S);
+        static if (isNarrowString!S && is(E == char))
+        {
+            if (isBig)
+            {
+                large.ptr[large.len .. large.len + s.length] = s;
+                large.len += s.length;
+            }
+            else
+            {
+                small.data[smallLength .. smallLength + s.length] = s;
+                small.slen += s.length;
+            }
+
+            return this;
+        }
+        else
+        {
+            foreach (E ch; s)
+            {
+                this ~= ch;
+            }
+            return this;
+        }
+    }
+
+    /// ditto
+    ref opOpAssign(string op, R)(R r)
+    if (op == "~" && !isNarrowString!R && isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
+    {
+        static if (hasLength!R)
         {
             if (!isBig && r.length + smallLength > smallCapacity)
             {
@@ -90,31 +129,6 @@ struct Yarn
             else if (isBig)
             {
                 extend(r.length);
-            }
-
-            alias E = Unqual!(ElementEncodingType!R);
-            static if (isNarrowString!R && is(E == char))
-            {
-                if (isBig)
-                {
-                    large.ptr[large.len .. large.len + r.length] = r;
-                    large.len += r.length;
-                }
-                else
-                {
-                    small.data[smallLength .. smallLength + r.length] = r;
-                    small.slen += r.length;
-                }
-
-                return this;
-            }
-            else
-            {
-                foreach (E ch; r)
-                {
-                    this ~= ch;
-                }
-                return this;
             }
         }
         else
@@ -126,13 +140,13 @@ struct Yarn
                 // but that assumes popping is cheap
                 extend(8);
             }
-
-            for (; !r.empty; r.popFront)
-            {
-                this ~= r.front;
-            }
-            return this;
         }
+
+        for (; !r.empty; r.popFront)
+        {
+            this ~= r.front;
+        }
+        return this;
     }
 
     /**
@@ -151,7 +165,7 @@ struct Yarn
         newCapacity = total amount of elements that this Yarn
         should have space for.
      */
-    void reserve(size_t newCapacity)
+    void reserve(size_t newCapacity) @trusted pure nothrow
     {
         if (isBig && newCapacity > large.capacity)
         {
@@ -166,7 +180,7 @@ struct Yarn
     /**
     Returns: The data as a random access range of code units.
      */
-    auto byCodeUnit()
+    auto byCodeUnit() @trusted @nogc pure nothrow
     {
         import std.utf : byCodeUnit;
 
@@ -183,7 +197,7 @@ struct Yarn
     /**
     Returns: The data as a random access range of code units.
      */
-    auto byChar()
+    auto byChar() @trusted @nogc pure nothrow
     {
         return byCodeUnit;
     }
@@ -191,7 +205,7 @@ struct Yarn
     /**
     Returns: The data as a forward range of `wchars`
      */
-    auto byWchar()
+    auto byWchar() @trusted @nogc pure nothrow
     {
         import std.utf : byWchar;
 
@@ -208,7 +222,7 @@ struct Yarn
     /**
     Returns: The data as a bidirectional range of code points.
      */
-    auto byDchar()
+    auto byDchar() @trusted pure
     {
         // custom because byUTF is not bidirectional
         static struct Result(R)
@@ -236,7 +250,7 @@ struct Yarn
     /**
     Returns: The data as a forward range of Graphemes.
      */
-    auto byGrapheme()
+    auto byGrapheme() @trusted pure
     {
         import std.uni : byGrapheme;
 
@@ -258,12 +272,12 @@ struct Yarn
         small.slen |= small_flag;
     }
 
-    private size_t smallLength() @property const @nogc nothrow pure
+    private size_t smallLength() @property const @safe @nogc nothrow pure
     {
         return small.slen & small_mask;
     }
 
-    private ubyte isBig() @property const @nogc nothrow pure
+    private ubyte isBig() @property const @safe @nogc nothrow pure
     {
         return small.slen & small_flag;
     }
@@ -271,7 +285,7 @@ struct Yarn
     /*
     Allocates a new array on the GC and copies the small data to it.
      */
-    private void convertToBig(size_t cap = smallCapacity + 1)
+    private void convertToBig(size_t cap = smallCapacity + 1) @trusted pure nothrow
     {
         import core.memory : GC;
         import core.stdc.string : memcpy;
@@ -304,11 +318,10 @@ struct Yarn
     Allocates space for n extra elements. If capacity can hold n more
     elements does nothing.
      */
-    private void extend(size_t n)
+    private void extend(size_t n) @trusted pure nothrow
     {
         import core.checkedint : mulu;
         import core.memory : GC;
-        import core.stdc.string : memcpy;
 
         assert(isBig);
         immutable reqlen = large.len + n;
@@ -374,7 +387,7 @@ struct Yarn
     }
 }
 
-unittest
+@safe pure unittest
 {
     import std.algorithm.iteration : map;
     import std.algorithm.comparison : equal;
@@ -404,10 +417,18 @@ unittest
     assert(c.byCodeUnit.equal("0123456789000000000000000000000000000000"));
     c ~= r2.save;
     assert(c.byCodeUnit.equal("0123456789000000000000000000000000000000000000000000000000000000000000"));
+
+    auto r3 = map!(a => cast(char) (a + 47))(DummyRange!(ReturnBy.Value, Length.Yes, RangeType.Forward)());
+    Yarn d = Yarn(r3.save);
+    d ~= r3.save;
+    d ~= r3.save;
+    d ~= r3.save;
+    d ~= r3.save;
+    assert(d.byCodeUnit.equal("01234567890123456789012345678901234567890123456789"));
 }
 
 // test encoding on ctor and append
-unittest
+@safe pure unittest
 {
     import std.algorithm.comparison : equal;
     import std.range : retro;
@@ -434,7 +455,7 @@ unittest
     assert(d3.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾"));
 }
 
-unittest
+@safe pure unittest
 {
     import std.algorithm.comparison : equal;
     import std.string : assumeUTF;
@@ -465,7 +486,7 @@ unittest
     assert(y2.byGrapheme.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾".byGrapheme));
 }
 
-unittest
+pure unittest
 {
     Yarn y1;
     assert(!y1.isBig);
