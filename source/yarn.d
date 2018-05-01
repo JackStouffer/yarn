@@ -5,24 +5,37 @@ import std.range.primitives;
 import std.stdio;
 
 /**
- * Custom `string` type optimized for both small sizes and for appending
- * large amounts of data.
+Custom `string` type optimized for both small sizes and for appending
+large amounts of data.
+
+Specifically designed to not be compatible with built-in `string` types.
+In order to iterate over the data contained in a `Yarn`, the iteration
+method must be chosen first. This is in contrast with `string` which defaults
+to iteration by code point (a.k.a auto-decoding). `Yarn` offers the
+standard `std.utf` and `std.uni` range generating functions: `byCodeUnit`,
+`byCodePoint`, `byChar`, `byWchar`, `byDchar`, and `byGrapheme`. Any iteration
+of a `Yarn` must therefore explicitly choose the method of iteration at every
+usage. There is no way to get at the underlying data other than these methods.
+
+`Yarn` is an `OutputRange` for all `char` types.
  */
 struct Yarn
 {
-    ///
-    this(C)(const(C)[] chars)
-    if (isSomeChar!C)
+    /**
+    Params:
+        r = A finite input range of any character type.
+     */
+    this(R)(R r)
+    if (isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
     {
-        this ~= chars;
+        this ~= r;
     }
 
     /**
-     * Appends.
-     *
-     * Throws:
-     *     UTFException on bad utf data.
-     *     OutOfMemory when allocation fails.
+    Appends the given character or input range to this `Yarn`'s data.
+
+    Throws:
+        `UTFException` on bad utf data. `OutOfMemory` when allocation fails.
      */
     ref opOpAssign(string op, Char)(Char ch)
     if (op == "~" && isSomeChar!(Char))
@@ -66,7 +79,7 @@ struct Yarn
 
     /// ditto
     ref opOpAssign(string op, R)(R r)
-    if (op == "~" && isInputRange!R && isSomeChar!(ElementType!R))
+    if (op == "~" && isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
     {
         static if (hasLength!R || isNarrowString!R)
         {
@@ -122,7 +135,9 @@ struct Yarn
         }
     }
 
-    ///
+    /**
+    Performs the same action as `~=`.
+     */
     void put(R)(R r)
     if (isSomeChar!(R) || (isInputRange!(R) && isSomeChar!(ElementType!(R))))
     {
@@ -131,6 +146,10 @@ struct Yarn
 
     /**
     Allocate space for `newCapacity` elements.
+
+    Params:
+        newCapacity = total amount of elements that this Yarn
+        should have space for.
      */
     void reserve(size_t newCapacity)
     {
@@ -211,6 +230,23 @@ struct Yarn
         else
         {
             return Result!(char[])(small.data[0 .. smallLength]);
+        }
+    }
+
+    /**
+    Returns: The data as a forward range of Graphemes.
+     */
+    auto byGrapheme()
+    {
+        import std.uni : byGrapheme;
+
+        if (isBig)
+        {
+            return large.ptr[0 .. large.len].byGrapheme;
+        }
+        else
+        {
+            return small.data[0 .. smallLength].byGrapheme;
         }
     }
 
@@ -390,6 +426,7 @@ unittest
 {
     import std.algorithm.comparison : equal;
     import std.string : assumeUTF;
+    import std.uni : byGrapheme;
 
     Yarn y1 = Yarn("𐐷𐐸𐐺𐐾");
 
@@ -403,6 +440,8 @@ unittest
     uint[] s3 = [0x10437, 0x10438, 0x1043A, 0x1043E];
     assert(y1.byDchar.equal(s3.assumeUTF));
 
+    assert(y1.byGrapheme.equal("𐐷𐐸𐐺𐐾".byGrapheme));
+
     Yarn y2 = Yarn("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾");
     ushort[] s4 = [
         0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E,
@@ -411,6 +450,7 @@ unittest
         0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E
     ];
     assert(y2.byWchar.equal(s4.assumeUTF));
+    assert(y2.byGrapheme.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾".byGrapheme));
 }
 
 unittest
