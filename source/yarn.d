@@ -4,6 +4,7 @@ import std.traits;
 import std.range.primitives;
 version(unittest) import std.stdio;
 
+/// Default yarn type.
 alias yarn = Yarn!(immutable char);
 
 /**
@@ -341,18 +342,18 @@ if (isSomeChar!(C))
     private enum smallCapacity = 31 / C.sizeof;
     private enum small_flag = 0x80, small_mask = 0x7F;
     static if (C.sizeof == 1)
-        enum char[31] smallEmpty = [
+        enum char[smallCapacity] smallEmpty = [
             '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
             '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
             '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
         ];
     else static if (C.sizeof == 2)
-        enum wchar[15] smallEmpty = [
+        enum wchar[smallCapacity] smallEmpty = [
             '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
             '\0', '\0', '\0', '\0', '\0'
         ];
     else static if (C.sizeof == 4)
-        enum dchar[7] smallEmpty = [
+        enum dchar[smallCapacity] smallEmpty = [
             '\0', '\0', '\0', '\0', '\0', '\0', '\0'
         ];
 
@@ -489,26 +490,41 @@ if (isSomeChar!(C))
 
 @safe pure unittest
 {
+    import std.algorithm.comparison : equal;
+    import std.conv : to;
+    import std.meta : AliasSeq;
+    import std.uni : byGrapheme;
+
+    foreach (T; AliasSeq!(char, immutable char, wchar, immutable wchar, dchar, immutable dchar))
+    {
+        auto start = to!(T[])("test");
+        Yarn!(T) y1 = start;
+        assert(y1.byCodeUnit.equal(start));
+        assert(y1.byChar.equal("test"));
+        assert(y1.byWchar.equal("test"w));
+        assert(y1.byDchar.equal("test"d));
+        assert(y1.byGrapheme.equal("test".byGrapheme));
+
+        y1 ~= " test test test";
+        y1 ~= " test test test"w;
+        y1 ~= " test test test"d;
+        assert(y1.byCodeUnit.equal(to!(T[])("test test test test test test test test test test")));
+        assert(y1.byChar.equal("test test test test test test test test test test"));
+        assert(y1.byWchar.equal("test test test test test test test test test test"w));
+        assert(y1.byDchar.equal("test test test test test test test test test test"d));
+
+        // test construction conversion to large
+        Yarn!(T) y2 = to!(T[])("test test test test test test test test test test test");
+        assert(y2.byChar.equal("test test test test test test test test test test test"));
+    }
+}
+
+@safe pure unittest
+{
     import std.algorithm.iteration : map;
     import std.algorithm.comparison : equal;
     import std.internal.test.dummyrange : DummyRange, ReturnBy, Length, RangeType, ReferenceForwardRange;
     import std.range : repeat;
-
-    auto a = yarn("test");
-    assert(a.byCodeUnit.equal("test"));
-
-    a ~= " test";
-    assert(a.byCodeUnit.equal("test test"));
-
-    a ~= " test test test test test";
-    a ~= " test test test test test";
-    a ~= " test test test test test";
-    assert(a.isBig);
-    assert(a.byCodeUnit.equal("test test test test test test test test test test test test test test test test test"));
-
-    // test construction with a string that triggers conversion to large
-    auto b = yarn("000000000000000000000000000000000000000000000000");
-    assert(b.byCodeUnit.equal("000000000000000000000000000000000000000000000000"));
 
     auto r1 = map!(a => cast(char) (a + 47))(DummyRange!(ReturnBy.Value, Length.No, RangeType.Input)());
     yarn c = yarn(r1);
@@ -588,7 +604,7 @@ if (isSomeChar!(C))
     assert(y2.byGrapheme.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾".byGrapheme));
 }
 
-pure unittest
+@system pure unittest
 {
     import std.algorithm.comparison : equal;
 
@@ -617,30 +633,4 @@ pure unittest
     y1 = "test";
     assert(!y1.isBig);
     assert(y1.byCodeUnit.equal("test"));
-}
-
-unittest
-{
-    import std.algorithm.comparison : equal;
-    import std.conv : to;
-    import std.meta : AliasSeq;
-    import std.uni : byGrapheme;
-
-    foreach (T; AliasSeq!(wchar, immutable wchar, dchar, immutable dchar))
-    {
-        auto start = to!(T[])("test");
-        Yarn!(T) y1 = start;
-        assert(y1.byCodeUnit.equal(start));
-        assert(y1.byChar.equal("test"));
-        assert(y1.byWchar.equal("test"w));
-        assert(y1.byDchar.equal("test"d));
-        assert(y1.byGrapheme.equal("test".byGrapheme));
-
-        y1 ~= " test test test"w;
-        y1 ~= " test test test"d;
-        assert(y1.byCodeUnit.equal(to!(T[])("test test test test test test test")));
-        assert(y1.byChar.equal("test test test test test test test"));
-        assert(y1.byWchar.equal("test test test test test test test"w));
-        assert(y1.byDchar.equal("test test test test test test test"d));
-    }
 }
