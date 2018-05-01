@@ -4,6 +4,8 @@ import std.traits;
 import std.range.primitives;
 version(unittest) import std.stdio;
 
+alias yarn = Yarn!(immutable char);
+
 /**
 A safe `string` type optimized for both small sizes and for appending
 large amounts of data.
@@ -21,8 +23,11 @@ data other than these methods.
 
 `Yarn` is an `OutputRange` for all `char` types.
  */
-struct Yarn
+struct Yarn(C)
+if (isSomeChar!(C))
 {
+    private alias UC = Unqual!(C);
+
     /**
     Params:
         r = A finite input range of any character type.
@@ -33,14 +38,33 @@ struct Yarn
         this ~= r;
     }
 
-    /**
-    Clears the current data and appends the given character range.
-     */
-    ref opAssign(R)(R r)
-    if (isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
+    static if (isMutable!C)
     {
-        reset();
-        this ~= r;
+        /**
+        Resets the state of this `Yarn` and appends the given character range.
+
+        Disabled when `C` is a non-mutable type, as it may overwrite immutable
+        data.
+
+        Note:
+            Does not manually free the GC array if it exists.
+         */
+        ref opAssign(R)(R r)
+        if (isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
+        {
+            reset();
+            this ~= r;
+        }
+        /*
+        Set the Yarn back to small and clear 
+
+        Not freeing the memory here to avoid dangling pointers elsewhere
+         */
+        private void reset() @trusted @nogc pure nothrow
+        {
+            small.slen = 0;
+            small.data = smallEmpty;
+        }
     }
 
     /**
@@ -52,7 +76,7 @@ struct Yarn
     ref opOpAssign(string op, Char)(Char ch) @trusted pure
     if (op == "~" && isSomeChar!(Char))
     {
-        static if (is(Unqual!Char == char))
+        static if (is(Unqual!Char == UC))
         {
             if (!isBig)
             {
@@ -79,7 +103,7 @@ struct Yarn
         else
         {
             import std.utf : encode;
-            char[4] buf;
+            UC[4 / UC.sizeof] buf;
             immutable size_t i = encode(buf, ch);
             foreach (j; 0 .. i)
             {
@@ -91,7 +115,7 @@ struct Yarn
 
     /// ditto
     ref opOpAssign(string op, S)(S s) @trusted pure
-    if (op == "~" && isNarrowString!S)
+    if (op == "~" && isSomeString!S)
     {
         if (!isBig && s.length + smallLength > smallCapacity)
         {
@@ -103,7 +127,7 @@ struct Yarn
         }
 
         alias E = Unqual!(ElementEncodingType!S);
-        static if (isNarrowString!S && is(E == char))
+        static if (is(E == UC))
         {
             if (isBig)
             {
@@ -130,7 +154,7 @@ struct Yarn
 
     /// ditto
     ref opOpAssign(string op, R)(R r)
-    if (op == "~" && !isNarrowString!R && isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
+    if (op == "~" && !isSomeString!R && isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
     {
         static if (hasLength!R)
         {
@@ -194,15 +218,22 @@ struct Yarn
      */
     auto byCodeUnit() @trusted @nogc pure nothrow
     {
+        import std.exception : assumeUnique;
         import std.utf : byCodeUnit;
 
         if (isBig)
         {
-            return large.ptr[0 .. large.len].byCodeUnit;
+            static if (isMutable!C)
+                return large.ptr[0 .. large.len].byCodeUnit;
+            else
+                return large.ptr[0 .. large.len].assumeUnique.byCodeUnit;
         }
         else
         {
-            return small.data[0 .. smallLength].byCodeUnit;
+            static if (isMutable!C)
+                return small.data[0 .. smallLength].byCodeUnit;
+            else
+                return small.data[0 .. smallLength].assumeUnique.byCodeUnit;
         }
     }
 
@@ -211,7 +242,23 @@ struct Yarn
      */
     auto byChar() @trusted @nogc pure nothrow
     {
-        return byCodeUnit;
+        import std.exception : assumeUnique;
+        import std.utf : byChar;
+
+        if (isBig)
+        {
+            static if (isMutable!C)
+                return large.ptr[0 .. large.len].byChar;
+            else
+                return large.ptr[0 .. large.len].assumeUnique.byChar;
+        }
+        else
+        {
+            static if (isMutable!C)
+                return small.data[0 .. smallLength].byChar;
+            else
+                return small.data[0 .. smallLength].assumeUnique.byChar;
+        }
     }
 
     /**
@@ -219,15 +266,22 @@ struct Yarn
      */
     auto byWchar() @trusted @nogc pure nothrow
     {
+        import std.exception : assumeUnique;
         import std.utf : byWchar;
 
         if (isBig)
         {
-            return large.ptr[0 .. large.len].byWchar;
+            static if (isMutable!C)
+                return large.ptr[0 .. large.len].byWchar;
+            else
+                return large.ptr[0 .. large.len].assumeUnique.byWchar;
         }
         else
         {
-            return small.data[0 .. smallLength].byWchar;
+            static if (isMutable!C)
+                return small.data[0 .. smallLength].byWchar;
+            else
+                return small.data[0 .. smallLength].assumeUnique.byWchar;
         }
     }
 
@@ -236,6 +290,8 @@ struct Yarn
      */
     auto byDchar() @trusted pure
     {
+        import std.exception : assumeUnique;
+
         // custom because byUTF is not bidirectional
         static struct Result(R)
         {
@@ -251,11 +307,17 @@ struct Yarn
 
         if (isBig)
         {
-            return Result!(char[])(large.ptr[0 .. large.len]);
+            static if (isMutable!C)
+                return Result!(C[])(large.ptr[0 .. large.len]);
+            else
+                return Result!(C[])(large.ptr[0 .. large.len].assumeUnique);
         }
         else
         {
-            return Result!(char[])(small.data[0 .. smallLength]);
+            static if (isMutable!C)
+                return Result!(C[])(small.data[0 .. smallLength]);
+            else
+                return Result!(C[])(small.data[0 .. smallLength].assumeUnique);
         }
     }
 
@@ -276,8 +338,23 @@ struct Yarn
         }
     }
 
-    private enum smallCapacity = 31;
+    private enum smallCapacity = 31 / C.sizeof;
     private enum small_flag = 0x80, small_mask = 0x7F;
+    static if (C.sizeof == 1)
+        enum char[31] smallEmpty = [
+            '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
+            '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
+            '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
+        ];
+    else static if (C.sizeof == 2)
+        enum wchar[15] smallEmpty = [
+            '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
+            '\0', '\0', '\0', '\0', '\0'
+        ];
+    else static if (C.sizeof == 4)
+        enum dchar[7] smallEmpty = [
+            '\0', '\0', '\0', '\0', '\0', '\0', '\0'
+        ];
 
     private void setBig() @safe @nogc nothrow pure
     {
@@ -312,18 +389,29 @@ struct Yarn
 
         // copy stdx.allocator behavior
         immutable nbytes = roundUpToMultipleOf(
-            cap * char.sizeof,
+            cap * C.sizeof,
             max(double.alignof, real.alignof)
         );
 
         immutable size_t k = smallLength;
-        char* p = cast(char*) GC.malloc(nbytes, GC.BlkAttr.NO_SCAN | GC.BlkAttr.APPENDABLE);
+        UC* p = cast(UC*) GC.malloc(nbytes, GC.BlkAttr.NO_SCAN | GC.BlkAttr.APPENDABLE);
 
-        memcpy(p, small.data.ptr, k);
+        static if (C.sizeof == 1)
+        {
+            memcpy(p, small.data.ptr, k);
+        }
+        else
+        {
+            for (int i = 0; i < k; i++)
+            {
+                p[i] = small.data[i];
+            }
+        }
+
         setBig();
         large.ptr = p;
         large.len = k;
-        large.capacity = nbytes / char.sizeof;
+        large.capacity = nbytes / C.sizeof;
     }
 
     /*
@@ -342,10 +430,10 @@ struct Yarn
             return;
 
         bool overflow;
-        const nbytes = mulu(reqlen, char.sizeof, overflow);
+        const nbytes = mulu(reqlen, C.sizeof, overflow);
         if (overflow) assert(0, "New size of Yarn overflowed.");
 
-        large.ptr = cast(char*) GC.realloc(
+        large.ptr = cast(UC*) GC.realloc(
             large.ptr,
             nbytes,
             GC.BlkAttr.NO_SCAN | GC.BlkAttr.APPENDABLE
@@ -353,28 +441,17 @@ struct Yarn
         large.capacity = reqlen;
     }
 
-    /*
-    Set the Yarn back to small and clear 
-
-    Not freeing the memory here to avoid dangling pointers elsewhere
-     */
-    void reset() @trusted @nogc pure nothrow
-    {
-        small.slen = 0;
-        small.data = smallEmpty;
-    }
-
     version(LittleEndian)
     {
         private static struct Small
         {
-            char[smallCapacity] data;
+            UC[smallCapacity] data;
             ubyte slen;
         }
 
         private static struct Large
         {
-            char* ptr;
+            UC* ptr;
             size_t capacity;
             size_t len;
             size_t padding;
@@ -391,7 +468,7 @@ struct Yarn
         private static struct Small
         {
             ubyte slen;
-            char[smallCapacity] data;
+            UC[smallCapacity] data;
         }
 
         private static struct Large
@@ -399,7 +476,7 @@ struct Yarn
             size_t padding;
             size_t len;
             size_t capacity;
-            char* ptr;
+            UC* ptr;
         }
 
         private union
@@ -417,7 +494,7 @@ struct Yarn
     import std.internal.test.dummyrange : DummyRange, ReturnBy, Length, RangeType, ReferenceForwardRange;
     import std.range : repeat;
 
-    auto a = Yarn("test");
+    auto a = yarn("test");
     assert(a.byCodeUnit.equal("test"));
 
     a ~= " test";
@@ -429,16 +506,12 @@ struct Yarn
     assert(a.isBig);
     assert(a.byCodeUnit.equal("test test test test test test test test test test test test test test test test test"));
 
-    a = "test";
-    assert(!a.isBig);
-    assert(a.byCodeUnit.equal("test"));
-
     // test construction with a string that triggers conversion to large
-    auto b = Yarn("000000000000000000000000000000000000000000000000");
+    auto b = yarn("000000000000000000000000000000000000000000000000");
     assert(b.byCodeUnit.equal("000000000000000000000000000000000000000000000000"));
 
     auto r1 = map!(a => cast(char) (a + 47))(DummyRange!(ReturnBy.Value, Length.No, RangeType.Input)());
-    Yarn c = Yarn(r1);
+    yarn c = yarn(r1);
     assert(c.byCodeUnit.equal("0123456789"));
     auto r2 = map!(a => cast(char) (a + '0'))(new ReferenceForwardRange!int(0.repeat(30)));
     c ~= r2.save;
@@ -447,7 +520,7 @@ struct Yarn
     assert(c.byCodeUnit.equal("0123456789000000000000000000000000000000000000000000000000000000000000"));
 
     auto r3 = map!(a => cast(char) (a + 47))(DummyRange!(ReturnBy.Value, Length.Yes, RangeType.Forward)());
-    Yarn d = Yarn(r3.save);
+    yarn d = yarn(r3.save);
     d ~= r3.save;
     d ~= r3.save;
     d ~= r3.save;
@@ -462,16 +535,16 @@ struct Yarn
     import std.range : retro;
 
     wstring w = "øōôòœõ";
-    Yarn y1 = Yarn(w);
+    yarn y1 = w;
     assert(y1.byDchar.equal("øōôòœõ"));
-    Yarn y2;
+    yarn y2;
     y2 ~= w;
     assert(y2.byDchar.equal("øōôòœõ"));
 
     dstring d = "𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾";
-    Yarn y3 = Yarn(d);
+    yarn y3 = d;
     assert(y3.byDchar.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾"));
-    Yarn y4;
+    yarn y4;
     y4 ~= d;
     assert(y4.byDchar.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾"));
     assert(y4.byDchar.retro.equal("𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷"));
@@ -485,15 +558,16 @@ struct Yarn
 
 @safe pure unittest
 {
+    import std.algorithm.iteration : map;
     import std.algorithm.comparison : equal;
     import std.string : assumeUTF;
     import std.uni : byGrapheme;
 
-    Yarn y1 = "𐐷𐐸𐐺𐐾";
+    yarn y1 = "𐐷𐐸𐐺𐐾";
 
     ubyte[] s1 = [0xF0, 0x90, 0x90, 0xB7, 0xF0, 0x90, 0x90, 0xB8,
                   0xF0, 0x90, 0x90, 0xBA, 0xF0, 0x90, 0x90, 0xBE];
-    assert(y1.byChar.equal(s1.assumeUTF));
+    assert(y1.byChar.equal(s1.map!(a => cast(char) a)));
 
     ushort[] s2 = [0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E];
     assert(y1.byWchar.equal(s2.assumeUTF));
@@ -503,7 +577,7 @@ struct Yarn
 
     assert(y1.byGrapheme.equal("𐐷𐐸𐐺𐐾".byGrapheme));
 
-    Yarn y2 = "𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾";
+    yarn y2 = "𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾";
     ushort[] s4 = [
         0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E,
         0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E,
@@ -516,7 +590,9 @@ struct Yarn
 
 pure unittest
 {
-    Yarn y1;
+    import std.algorithm.comparison : equal;
+
+    Yarn!(char) y1;
     assert(!y1.isBig);
     // does nothing, as it's < smallCapacity
     y1.reserve(10);
@@ -537,10 +613,34 @@ pure unittest
     assert(!y1.isBig);
     y1.reserve(50);
     assert(y1.isBig);
+
+    y1 = "test";
+    assert(!y1.isBig);
+    assert(y1.byCodeUnit.equal("test"));
 }
 
-enum char[31] smallEmpty = [
-    '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
-    '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
-    '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
-];
+unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.conv : to;
+    import std.meta : AliasSeq;
+    import std.uni : byGrapheme;
+
+    foreach (T; AliasSeq!(wchar, immutable wchar, dchar, immutable dchar))
+    {
+        auto start = to!(T[])("test");
+        Yarn!(T) y1 = start;
+        assert(y1.byCodeUnit.equal(start));
+        assert(y1.byChar.equal("test"));
+        assert(y1.byWchar.equal("test"w));
+        assert(y1.byDchar.equal("test"d));
+        assert(y1.byGrapheme.equal("test".byGrapheme));
+
+        y1 ~= " test test test"w;
+        y1 ~= " test test test"d;
+        assert(y1.byCodeUnit.equal(to!(T[])("test test test test test test test")));
+        assert(y1.byChar.equal("test test test test test test test"));
+        assert(y1.byWchar.equal("test test test test test test test"w));
+        assert(y1.byDchar.equal("test test test test test test test"d));
+    }
+}

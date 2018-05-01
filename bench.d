@@ -21,7 +21,7 @@ auto test1()
 
 auto test2()
 {
-    Yarn a;
+    yarn a;
     a ~= "Recusandae nobis ipsam";
     return a.byCodeUnit.length;
 }
@@ -36,21 +36,30 @@ auto test3()
 auto test4()
 {
     string a;
-    a ~= "Recusandae nobis ipsam qui assumenda iusto iure. Consectetur nobis aliquid eius autem error fugiat veniam.";
+    a ~= q{
+Voluptate est numquam aut consequatur libero qui. Sed pariatur quisquam aspernatur quo similique iure occaecati repudiandae. Eligendi pariatur veritatis nostrum aut debitis modi at. In quis sapiente et quaerat et omnis doloribus. Minima nostrum iure adipisci consequatur.
+Expedita quibusdam culpa tempora dolores quo illo sed unde. Impedit sint atque doloremque. Deleniti veritatis nulla occaecati. Nam veritatis omnis omnis necessitatibus nisi. Voluptas delectus autem et non reprehenderit quia.
+    };
     return a.length;
 }
 
 auto test5()
 {
-    Yarn a;
-    a ~= "Recusandae nobis ipsam qui assumenda iusto iure. Consectetur nobis aliquid eius autem error fugiat veniam.";
+    yarn a;
+    a ~= q{
+Voluptate est numquam aut consequatur libero qui. Sed pariatur quisquam aspernatur quo similique iure occaecati repudiandae. Eligendi pariatur veritatis nostrum aut debitis modi at. In quis sapiente et quaerat et omnis doloribus. Minima nostrum iure adipisci consequatur.
+Expedita quibusdam culpa tempora dolores quo illo sed unde. Impedit sint atque doloremque. Deleniti veritatis nulla occaecati. Nam veritatis omnis omnis necessitatibus nisi. Voluptas delectus autem et non reprehenderit quia.
+    };
     return a.byCodeUnit.length;
 }
 
 auto test6()
 {
     Appender!(string) a;
-    a ~= "Recusandae nobis ipsam qui assumenda iusto iure. Consectetur nobis aliquid eius autem error fugiat veniam.";
+    a ~= q{
+Voluptate est numquam aut consequatur libero qui. Sed pariatur quisquam aspernatur quo similique iure occaecati repudiandae. Eligendi pariatur veritatis nostrum aut debitis modi at. In quis sapiente et quaerat et omnis doloribus. Minima nostrum iure adipisci consequatur.
+Expedita quibusdam culpa tempora dolores quo illo sed unde. Impedit sint atque doloremque. Deleniti veritatis nulla occaecati. Nam veritatis omnis omnis necessitatibus nisi. Voluptas delectus autem et non reprehenderit quia.
+    };
     return a.data.length;
 }
 
@@ -78,7 +87,7 @@ void main()
     writeln("\nSmall String Sort\n============================================");
     auto sw = StopWatch(AutoStart.no);
     char[] s1 = "Recusandae nobis ipsam".dup;
-    Yarn y1 = Yarn("Recusandae nobis ipsam");
+    Yarn!(char) y1 = "Recusandae nobis ipsam";
 
     sw.reset();
     sw.start();
@@ -96,7 +105,7 @@ void main()
 
     writeln("\nLarge String Sort\n============================================");
     char[] s2 = "Recusandae nobis ipsam qui assumenda iusto iure. Consectetur nobis aliquid eius autem error fugiat veniam.".dup;
-    Yarn y2 = Yarn("Recusandae nobis ipsam qui assumenda iusto iure. Consectetur nobis aliquid eius autem error fugiat veniam.");
+    Yarn!(char) y2 = "Recusandae nobis ipsam qui assumenda iusto iure. Consectetur nobis aliquid eius autem error fugiat veniam.";
 
     sw.reset();
     sw.start();
