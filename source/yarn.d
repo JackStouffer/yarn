@@ -13,9 +13,11 @@ In order to iterate over the data contained in a `Yarn`, the iteration
 method must be chosen first. This is in contrast with `string` which defaults
 to iteration by code point (a.k.a auto-decoding). `Yarn` offers the
 standard `std.utf` and `std.uni` range generating functions: `byCodeUnit`,
-`byCodePoint`, `byChar`, `byWchar`, `byDchar`, and `byGrapheme`. Any iteration
-of a `Yarn` must therefore explicitly choose the method of iteration at every
-usage. There is no way to get at the underlying data other than these methods.
+`byCodePoint`, `byChar`, `byWchar`, `byDchar`, and `byGrapheme`.
+
+Any iteration or equality comparison of a `Yarn` must therefore explicitly choose
+the method of iteration at every usage. There is no way to get at the underlying
+data other than these methods.
 
 `Yarn` is an `OutputRange` for all `char` types.
  */
@@ -28,6 +30,16 @@ struct Yarn
     this(R)(R r)
     if (isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
     {
+        this ~= r;
+    }
+
+    /**
+    Clears the current data and appends the given character range.
+     */
+    ref opAssign(R)(R r)
+    if (isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
+    {
+        reset();
         this ~= r;
     }
 
@@ -308,10 +320,10 @@ struct Yarn
         char* p = cast(char*) GC.malloc(nbytes, GC.BlkAttr.NO_SCAN | GC.BlkAttr.APPENDABLE);
 
         memcpy(p, small.data.ptr, k);
+        setBig();
         large.ptr = p;
         large.len = k;
         large.capacity = nbytes / char.sizeof;
-        setBig();
     }
 
     /*
@@ -339,6 +351,17 @@ struct Yarn
             GC.BlkAttr.NO_SCAN | GC.BlkAttr.APPENDABLE
         );
         large.capacity = reqlen;
+    }
+
+    /*
+    Set the Yarn back to small and clear 
+
+    Not freeing the memory here to avoid dangling pointers elsewhere
+     */
+    void reset() @trusted @nogc pure nothrow
+    {
+        small.slen = 0;
+        small.data = smallEmpty;
     }
 
     version(LittleEndian)
@@ -403,7 +426,12 @@ struct Yarn
     a ~= " test test test test test";
     a ~= " test test test test test";
     a ~= " test test test test test";
+    assert(a.isBig);
     assert(a.byCodeUnit.equal("test test test test test test test test test test test test test test test test test"));
+
+    a = "test";
+    assert(!a.isBig);
+    assert(a.byCodeUnit.equal("test"));
 
     // test construction with a string that triggers conversion to large
     auto b = Yarn("000000000000000000000000000000000000000000000000");
@@ -461,7 +489,7 @@ struct Yarn
     import std.string : assumeUTF;
     import std.uni : byGrapheme;
 
-    Yarn y1 = Yarn("𐐷𐐸𐐺𐐾");
+    Yarn y1 = "𐐷𐐸𐐺𐐾";
 
     ubyte[] s1 = [0xF0, 0x90, 0x90, 0xB7, 0xF0, 0x90, 0x90, 0xB8,
                   0xF0, 0x90, 0x90, 0xBA, 0xF0, 0x90, 0x90, 0xBE];
@@ -475,7 +503,7 @@ struct Yarn
 
     assert(y1.byGrapheme.equal("𐐷𐐸𐐺𐐾".byGrapheme));
 
-    Yarn y2 = Yarn("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾");
+    Yarn y2 = "𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾";
     ushort[] s4 = [
         0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E,
         0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E,
@@ -504,4 +532,15 @@ pure unittest
 
     y1.reserve(100);
     assert(y1.large.capacity >= 100);
+
+    y1.reset();
+    assert(!y1.isBig);
+    y1.reserve(50);
+    assert(y1.isBig);
 }
+
+enum char[31] smallEmpty = [
+    '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
+    '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
+    '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
+];
