@@ -55,7 +55,7 @@ struct Yarn
         {
             import std.utf : encode;
             char[4] buf;
-            size_t i = encode(buf, ch);
+            immutable size_t i = encode(buf, ch);
             foreach (j; 0 .. i)
             {
                 this ~= buf[j];
@@ -137,6 +137,10 @@ struct Yarn
         if (isBig && newCapacity > large.capacity)
         {
             extend(newCapacity - large.len);
+        }
+        else if (!isBig && newCapacity > smallCapacity)
+        {
+            convertToBig(newCapacity);
         }
     }
 
@@ -271,24 +275,14 @@ struct Yarn
         import core.stdc.string : memcpy;
 
         assert(isBig);
-        immutable len = large.len;
-        immutable reqlen = len + n;
+        immutable reqlen = large.len + n;
 
         if (large.capacity >= reqlen)
             return;
 
-        immutable u = GC.extend(large.ptr, n * char.sizeof, (reqlen - len) * char.sizeof);
-        if (u)
-        {
-            // extend worked, update the capacity
-            large.capacity = u / char.sizeof;
-            return;
-        }
-
-        // didn't work, must reallocate
         bool overflow;
         const nbytes = mulu(reqlen, char.sizeof, overflow);
-        if (overflow) assert(0);
+        if (overflow) assert(0, "New size of Yarn overflowed.");
 
         large.ptr = cast(char*) GC.realloc(
             large.ptr,
@@ -384,6 +378,12 @@ unittest
     y4 ~= d;
     assert(y4.byDchar.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾"));
     assert(y4.byDchar.retro.equal("𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷"));
+
+    auto d2 = y4.byDchar;
+    auto d3 = d2.save;
+    d2.popFront;
+    d2.popFront;
+    assert(d3.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾"));
 }
 
 unittest
@@ -402,20 +402,33 @@ unittest
 
     uint[] s3 = [0x10437, 0x10438, 0x1043A, 0x1043E];
     assert(y1.byDchar.equal(s3.assumeUTF));
+
+    Yarn y2 = Yarn("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾");
+    ushort[] s4 = [
+        0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E,
+        0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E,
+        0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E,
+        0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E
+    ];
+    assert(y2.byWchar.equal(s4.assumeUTF));
 }
 
-/*
-Returns the proper allocation attribute for T
- */
-private template blockAttribute(T)
+unittest
 {
-    import core.memory;
-    static if (hasIndirections!(T) || is(T == void))
-    {
-        enum blockAttribute = 0;
-    }
-    else
-    {
-        enum blockAttribute = GC.BlkAttr.NO_SCAN;
-    }
+    Yarn y1;
+    assert(!y1.isBig);
+    // does nothing, as it's < smallCapacity
+    y1.reserve(10);
+    assert(!y1.isBig);
+    y1.reserve(50);
+    assert(y1.isBig);
+    // not exact as it's more effectient to allocate more
+    // in many cases
+    assert(y1.large.capacity >= 50);
+    // should do nothing
+    y1.extend(20);
+    assert(y1.large.capacity >= 50);
+
+    y1.reserve(100);
+    assert(y1.large.capacity >= 100);
 }
