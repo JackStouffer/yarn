@@ -39,32 +39,23 @@ if (isSomeChar!(C))
         this ~= r;
     }
 
-    static if (isMutable!C)
+    /**
+    Note:
+        Does not manually free the existing GC array.
+     */
+    ref opAssign(R)(R r)
+    if (isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
     {
-        /**
-        Resets the state of this `Yarn` and appends the given character range.
-
-        Disabled when `C` is a non-mutable type, as it may overwrite immutable
-        data.
-
-        Note:
-            Does not manually free the GC array if it exists.
-         */
-        ref opAssign(R)(R r)
-        if (isInputRange!R && !isInfinite!R && isSomeChar!(ElementType!R))
+        static if (isMutable!C)
         {
             reset();
             this ~= r;
         }
-        /*
-        Set the Yarn back to small and clear 
-
-        Not freeing the memory here to avoid dangling pointers elsewhere
-         */
-        private void reset() @trusted @nogc pure nothrow
+        else
         {
-            small.slen = 0;
-            small.data = smallEmpty;
+            // allocate a new array and let the old one be collected
+            convertToBig(r.length);
+            this ~= r;
         }
     }
 
@@ -214,10 +205,28 @@ if (isSomeChar!(C))
         }
     }
 
+    static if (isMutable!C)
+    {
+        /**
+        Set the Yarn back to small and clear the existing data.
+
+        Disabled when `C` is a non-mutable type, as it may overwrite immutable
+        data.
+
+        Note:
+            Does not manually free the existing GC array.
+         */
+        void reset() @nogc pure nothrow
+        {
+            small.slen = 0;
+            small.data = smallEmpty;
+        }
+    }
+
     /**
     Returns: The data as a random access range of code units.
      */
-    auto byCodeUnit() @trusted @nogc pure nothrow
+    auto byCodeUnit() @nogc pure nothrow
     {
         import std.exception : assumeUnique;
         import std.utf : byCodeUnit;
@@ -241,7 +250,7 @@ if (isSomeChar!(C))
     /**
     Returns: The data as a random access range of code units.
      */
-    auto byChar() @trusted @nogc pure nothrow
+    auto byChar() @nogc pure nothrow
     {
         import std.exception : assumeUnique;
         import std.utf : byChar;
@@ -265,7 +274,7 @@ if (isSomeChar!(C))
     /**
     Returns: The data as a forward range of `wchars`
      */
-    auto byWchar() @trusted @nogc pure nothrow
+    auto byWchar() @system @nogc pure nothrow
     {
         import std.exception : assumeUnique;
         import std.utf : byWchar;
@@ -289,7 +298,7 @@ if (isSomeChar!(C))
     /**
     Returns: The data as a bidirectional range of code points.
      */
-    auto byDchar() @trusted pure
+    auto byDchar() @system pure
     {
         import std.exception : assumeUnique;
 
@@ -325,19 +334,19 @@ if (isSomeChar!(C))
     /**
     Returns: The data as a forward range of Graphemes.
      */
-    auto byGrapheme() @trusted pure
-    {
-        import std.uni : byGrapheme;
+    //auto byGrapheme() @trusted pure
+    //{
+    //    import std.uni : byGrapheme;
 
-        if (isBig)
-        {
-            return large.ptr[0 .. large.len].byGrapheme;
-        }
-        else
-        {
-            return small.data[0 .. smallLength].byGrapheme;
-        }
-    }
+    //    if (isBig)
+    //    {
+    //        return large.ptr[0 .. large.len].byGrapheme;
+    //    }
+    //    else
+    //    {
+    //        return small.data[0 .. smallLength].byGrapheme;
+    //    }
+    //}
 
     private enum smallCapacity = 31 / C.sizeof;
     private enum small_flag = 0x80, small_mask = 0x7F;
@@ -383,16 +392,13 @@ if (isSomeChar!(C))
 
         static size_t roundUpToMultipleOf(size_t s, ulong base)
         {
-            assert(base);
             auto rem = s % base;
             return rem ? s + base - rem : s;
         }
 
         // copy stdx.allocator behavior
-        immutable nbytes = roundUpToMultipleOf(
-            cap * C.sizeof,
-            max(double.alignof, real.alignof)
-        );
+        enum alignof = max(double.alignof, real.alignof);
+        immutable nbytes = roundUpToMultipleOf(cap * C.sizeof, alignof);
 
         immutable size_t k = smallLength;
         UC* p = cast(UC*) GC.malloc(nbytes, GC.BlkAttr.NO_SCAN | GC.BlkAttr.APPENDABLE);
@@ -409,7 +415,10 @@ if (isSomeChar!(C))
             }
         }
 
-        setBig();
+        if (!isBig)
+        {
+            setBig();
+        }
         large.ptr = p;
         large.len = k;
         large.capacity = nbytes / C.sizeof;
@@ -488,12 +497,12 @@ if (isSomeChar!(C))
     }
 }
 
-@safe pure unittest
+@system pure unittest
 {
     import std.algorithm.comparison : equal;
     import std.conv : to;
     import std.meta : AliasSeq;
-    import std.uni : byGrapheme;
+    //import std.uni : byGrapheme;
 
     foreach (T; AliasSeq!(char, immutable char, wchar, immutable wchar, dchar, immutable dchar))
     {
@@ -503,7 +512,7 @@ if (isSomeChar!(C))
         assert(y1.byChar.equal("test"));
         assert(y1.byWchar.equal("test"w));
         assert(y1.byDchar.equal("test"d));
-        assert(y1.byGrapheme.equal("test".byGrapheme));
+        //assert(y1.byGrapheme.equal("test".byGrapheme));
 
         y1 ~= " test test test";
         y1 ~= " test test test"w;
@@ -519,7 +528,7 @@ if (isSomeChar!(C))
     }
 }
 
-@safe pure unittest
+@system pure unittest
 {
     import std.algorithm.iteration : map;
     import std.algorithm.comparison : equal;
@@ -545,7 +554,7 @@ if (isSomeChar!(C))
 }
 
 // test encoding on ctor and append
-@safe pure unittest
+@system pure unittest
 {
     import std.algorithm.comparison : equal;
     import std.range : retro;
@@ -572,12 +581,12 @@ if (isSomeChar!(C))
     assert(d3.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾"));
 }
 
-@safe pure unittest
+@system pure unittest
 {
     import std.algorithm.iteration : map;
     import std.algorithm.comparison : equal;
     import std.string : assumeUTF;
-    import std.uni : byGrapheme;
+    //import std.uni : byGrapheme;
 
     yarn y1 = "𐐷𐐸𐐺𐐾";
 
@@ -591,7 +600,7 @@ if (isSomeChar!(C))
     uint[] s3 = [0x10437, 0x10438, 0x1043A, 0x1043E];
     assert(y1.byDchar.equal(s3.assumeUTF));
 
-    assert(y1.byGrapheme.equal("𐐷𐐸𐐺𐐾".byGrapheme));
+    //assert(y1.byGrapheme.equal("𐐷𐐸𐐺𐐾".byGrapheme));
 
     yarn y2 = "𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾";
     ushort[] s4 = [
@@ -601,7 +610,7 @@ if (isSomeChar!(C))
         0xD801, 0xDC37, 0xD801, 0xDC38, 0xD801, 0xDC3A, 0xD801, 0xDC3E
     ];
     assert(y2.byWchar.equal(s4.assumeUTF));
-    assert(y2.byGrapheme.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾".byGrapheme));
+    //assert(y2.byGrapheme.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾".byGrapheme));
 }
 
 @system pure unittest
@@ -615,7 +624,7 @@ if (isSomeChar!(C))
     assert(!y1.isBig);
     y1.reserve(50);
     assert(y1.isBig);
-    // not exact as it's more effectient to allocate more
+    // not exact as it's more efficient to allocate more
     // in many cases
     assert(y1.large.capacity >= 50);
     // should do nothing
