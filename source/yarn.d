@@ -78,7 +78,7 @@ if (isSomeChar!(C))
                 }
                 else
                 {
-                    small.data[smallLength] = ch;
+                    small.data[length] = ch;
                     small.slen++;
                     return this;
                 }
@@ -109,9 +109,9 @@ if (isSomeChar!(C))
     ref opOpAssign(string op, S)(S s) @trusted pure
     if (op == "~" && isSomeString!S)
     {
-        if (!isBig && s.length + smallLength > smallCapacity)
+        if (!isBig && s.length + length > smallCapacity)
         {
-            convertToBig(s.length + smallLength);
+            convertToBig(s.length + length);
         }
         else if (isBig)
         {
@@ -128,7 +128,7 @@ if (isSomeChar!(C))
             }
             else
             {
-                small.data[smallLength .. smallLength + s.length] = s;
+                small.data[length .. length + s.length] = s;
                 small.slen += s.length;
             }
 
@@ -150,9 +150,9 @@ if (isSomeChar!(C))
     {
         static if (hasLength!R)
         {
-            if (!isBig && r.length + smallLength > smallCapacity)
+            if (!isBig && r.length + length > smallCapacity)
             {
-                convertToBig(r.length + smallLength);
+                convertToBig(r.length + length);
             }
             else if (isBig)
             {
@@ -226,126 +226,56 @@ if (isSomeChar!(C))
     /**
     Returns: The data as a random access range of code units.
      */
-    auto byCodeUnit() @nogc pure nothrow
+    auto byCodeUnit() @trusted @nogc pure nothrow
     {
-        import std.exception : assumeUnique;
         import std.utf : byCodeUnit;
 
-        if (isBig)
-        {
-            static if (isMutable!C)
-                return large.ptr[0 .. large.len].byCodeUnit;
-            else
-                return large.ptr[0 .. large.len].assumeUnique.byCodeUnit;
-        }
-        else
-        {
-            static if (isMutable!C)
-                return small.data[0 .. smallLength].byCodeUnit;
-            else
-                return small.data[0 .. smallLength].assumeUnique.byCodeUnit;
-        }
+        auto t = Range!(typeof(this), C)(this, 0, length());
+        return t.byCodeUnit;
     }
 
     /**
     Returns: The data as a random access range of code units.
      */
-    auto byChar() @nogc pure nothrow
+    auto byChar() @trusted @nogc pure nothrow
     {
-        import std.exception : assumeUnique;
         import std.utf : byChar;
 
-        if (isBig)
-        {
-            static if (isMutable!C)
-                return large.ptr[0 .. large.len].byChar;
-            else
-                return large.ptr[0 .. large.len].assumeUnique.byChar;
-        }
-        else
-        {
-            static if (isMutable!C)
-                return small.data[0 .. smallLength].byChar;
-            else
-                return small.data[0 .. smallLength].assumeUnique.byChar;
-        }
+        auto t = Range!(typeof(this), C)(this, 0, length());
+        return t.byChar;
     }
 
     /**
     Returns: The data as a forward range of `wchars`
      */
-    auto byWchar() @system @nogc pure nothrow
+    auto byWchar() @trusted @nogc pure nothrow
     {
-        import std.exception : assumeUnique;
         import std.utf : byWchar;
 
-        if (isBig)
-        {
-            static if (isMutable!C)
-                return large.ptr[0 .. large.len].byWchar;
-            else
-                return large.ptr[0 .. large.len].assumeUnique.byWchar;
-        }
-        else
-        {
-            static if (isMutable!C)
-                return small.data[0 .. smallLength].byWchar;
-            else
-                return small.data[0 .. smallLength].assumeUnique.byWchar;
-        }
+        auto t = Range!(typeof(this), C)(this, 0, length());
+        return t.byWchar;
     }
 
     /**
     Returns: The data as a bidirectional range of code points.
      */
-    auto byDchar() @system pure
+    auto byDchar() @trusted pure nothrow
     {
-        import std.exception : assumeUnique;
+        import std.utf : byDchar;
 
-        // custom because byUTF is not bidirectional
-        static struct Result(R)
-        {
-            R data;
-
-            auto front() { return data.front; }
-            void popFront() { data.popFront; }
-            bool empty() { return data.empty; }
-            auto back() { return data.back; }
-            void popBack() { data.popBack; }
-            auto save() { return Result!(R)(data.save); }
-        }
-
-        if (isBig)
-        {
-            static if (isMutable!C)
-                return Result!(C[])(large.ptr[0 .. large.len]);
-            else
-                return Result!(C[])(large.ptr[0 .. large.len].assumeUnique);
-        }
-        else
-        {
-            static if (isMutable!C)
-                return Result!(C[])(small.data[0 .. smallLength]);
-            else
-                return Result!(C[])(small.data[0 .. smallLength].assumeUnique);
-        }
+        auto t = Range!(typeof(this), C)(this, 0, length());
+        return t.byDchar;
     }
 
     /**
     Returns: The data as a forward range of Graphemes.
      */
-    //auto byGrapheme() @trusted pure
+    //auto byGrapheme() @system pure
     //{
     //    import std.uni : byGrapheme;
 
-    //    if (isBig)
-    //    {
-    //        return large.ptr[0 .. large.len].byGrapheme;
-    //    }
-    //    else
-    //    {
-    //        return small.data[0 .. smallLength].byGrapheme;
-    //    }
+    //    auto t = Range!(typeof(this), C)(this, 0, length());
+    //    return t.byGrapheme;
     //}
 
     private enum smallCapacity = 31 / C.sizeof;
@@ -371,9 +301,12 @@ if (isSomeChar!(C))
         small.slen |= small_flag;
     }
 
-    private size_t smallLength() @property const @safe @nogc nothrow pure
+    private size_t length() @property const @trusted @nogc nothrow pure
     {
-        return small.slen & small_mask;
+        if (isBig)
+            return large.len;
+        else
+            return small.slen & small_mask;
     }
 
     private ubyte isBig() @property const @safe @nogc nothrow pure
@@ -400,7 +333,7 @@ if (isSomeChar!(C))
         enum alignof = max(double.alignof, real.alignof);
         immutable nbytes = roundUpToMultipleOf(cap * C.sizeof, alignof);
 
-        immutable size_t k = smallLength;
+        immutable size_t k = length;
         UC* p = cast(UC*) GC.malloc(nbytes, GC.BlkAttr.NO_SCAN | GC.BlkAttr.APPENDABLE);
 
         static if (C.sizeof == 1)
@@ -497,11 +430,12 @@ if (isSomeChar!(C))
     }
 }
 
-@system pure unittest
+@safe pure unittest
 {
     import std.algorithm.comparison : equal;
     import std.conv : to;
     import std.meta : AliasSeq;
+    import std.range : retro;
     //import std.uni : byGrapheme;
 
     foreach (T; AliasSeq!(char, immutable char, wchar, immutable wchar, dchar, immutable dchar))
@@ -509,6 +443,10 @@ if (isSomeChar!(C))
         auto start = to!(T[])("test");
         Yarn!(T) y1 = start;
         assert(y1.byCodeUnit.equal(start));
+        assert(y1.byCodeUnit[].equal(start));
+        assert(y1.byCodeUnit[0 .. 2].equal(start[0 .. 2]));
+        assert(y1.byCodeUnit[0] == 't');
+        assert(y1.byCodeUnit.retro.equal(start.retro));
         assert(y1.byChar.equal("test"));
         assert(y1.byWchar.equal("test"w));
         assert(y1.byDchar.equal("test"d));
@@ -518,6 +456,10 @@ if (isSomeChar!(C))
         y1 ~= " test test test"w;
         y1 ~= " test test test"d;
         assert(y1.byCodeUnit.equal(to!(T[])("test test test test test test test test test test")));
+        assert(y1.byCodeUnit[].equal(to!(T[])("test test test test test test test test test test")));
+        assert(y1.byCodeUnit.retro.equal(to!(T[])("test test test test test test test test test test").retro));
+        assert(y1.byCodeUnit[0 .. 2].equal("te"));
+        assert(y1.byCodeUnit[1] == 'e');
         assert(y1.byChar.equal("test test test test test test test test test test"));
         assert(y1.byWchar.equal("test test test test test test test test test test"w));
         assert(y1.byDchar.equal("test test test test test test test test test test"d));
@@ -528,7 +470,7 @@ if (isSomeChar!(C))
     }
 }
 
-@system pure unittest
+@safe pure unittest
 {
     import std.algorithm.iteration : map;
     import std.algorithm.comparison : equal;
@@ -554,10 +496,9 @@ if (isSomeChar!(C))
 }
 
 // test encoding on ctor and append
-@system pure unittest
+@safe pure unittest
 {
     import std.algorithm.comparison : equal;
-    import std.range : retro;
 
     wstring w = "øōôòœõ";
     yarn y1 = w;
@@ -572,7 +513,6 @@ if (isSomeChar!(C))
     yarn y4;
     y4 ~= d;
     assert(y4.byDchar.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾"));
-    assert(y4.byDchar.retro.equal("𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷𐐾𐐺𐐸𐐷"));
 
     auto d2 = y4.byDchar;
     auto d3 = d2.save;
@@ -581,7 +521,7 @@ if (isSomeChar!(C))
     assert(d3.equal("𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾𐐷𐐸𐐺𐐾"));
 }
 
-@system pure unittest
+@safe pure unittest
 {
     import std.algorithm.iteration : map;
     import std.algorithm.comparison : equal;
@@ -642,4 +582,138 @@ if (isSomeChar!(C))
     y1 = "test";
     assert(!y1.isBig);
     assert(y1.byCodeUnit.equal("test"));
+}
+
+// test for iterator invalidation
+@system pure unittest
+{
+    import std.algorithm.comparison : equal;
+
+    yarn y1 = "test";
+    auto r1 = y1.byCodeUnit;
+    y1 ~= " test test test test test test test test";
+    assert(y1.isBig);
+    assert(r1.equal("test"));
+    auto r2 = y1.byCodeUnit;
+    assert(r2.equal("test test test test test test test test test"));
+
+    Yarn!(wchar) y2 = "test";
+    auto r3 = y2.byChar;
+    y2 ~= " test test test test test test test test";
+    assert(r3.equal("test"));
+}
+
+/*
+Custom range type that copies that data/pointer of a Yarn in
+order to avoid iterator invalidation.
+ */
+private struct Range(T, C)
+{
+    T yarnData;
+    size_t a, b;
+
+    this(ref T data, size_t start, size_t end)
+    {
+        yarnData = data;
+        a = start;
+        b = end;
+    }
+
+    static if (isMutable!C)
+    {
+        ref inout(C) front() @trusted inout
+        {
+            assert(!empty, "Attempting to get the front of an empty " ~ T.stringof);
+            if (yarnData.isBig)
+                return yarnData.large.ptr[a];
+            else
+                return yarnData.small.data[a];
+        }
+
+        ref inout(C) back() @trusted inout
+        {
+            assert(!empty, "Attempting to get the back of an empty " ~ T.stringof);
+            if (yarnData.isBig)
+                return yarnData.large.ptr[b - 1];
+            else
+                return yarnData.small.data[b - 1];
+        }
+
+        ref inout(C) opIndex(size_t i) @trusted inout
+        {
+            assert(a + i < b);
+            if (yarnData.isBig)
+                return yarnData.large.ptr[a + i];
+            else
+                return yarnData.small.data[a + i];
+        }
+    }
+    else
+    {
+        inout(C) front() @trusted inout
+        {
+            assert(!empty, "Attempting to get the front of an empty " ~ T.stringof);
+            if (yarnData.isBig)
+                return yarnData.large.ptr[a];
+            else
+                return yarnData.small.data[a];
+        }
+
+        inout(C) back() @trusted inout
+        {
+            assert(!empty, "Attempting to get the back of an empty " ~ T.stringof);
+            if (yarnData.isBig)
+                return yarnData.large.ptr[b - 1];
+            else
+                return yarnData.small.data[b - 1];
+        }
+
+        inout(C) opIndex(size_t i) @trusted inout
+        {
+            assert(a + i < b);
+            if (yarnData.isBig)
+                return yarnData.large.ptr[a + i];
+            else
+                return yarnData.small.data[a + i];
+        }
+    }
+
+    void popFront() @safe @nogc pure nothrow
+    {
+        assert(!empty, "Attempting to popFront an empty " ~ T.stringof);
+        ++a;
+    }
+
+    void popBack() @safe @nogc pure nothrow
+    {
+        assert(!empty, "Attempting to popBack an empty " ~ T.stringof);
+        --b;
+    }
+
+    auto save() @property
+    {
+        return this;
+    }
+
+    bool empty() @property @safe pure nothrow const
+    {
+        return a >= b;
+    }
+
+    size_t length() @property @safe pure nothrow const
+    {
+        return b - a;
+    }
+    alias opDollar = length;
+
+    auto opSlice()
+    {
+        return typeof(this)(yarnData, a, b);
+    }
+
+    auto opSlice(size_t i, size_t j)
+    {
+        assert(i <= j && a + j <= b);
+        return typeof(this)(yarnData, a + i, a + j);
+    }
 }
