@@ -30,6 +30,8 @@ if (isSomeChar!(C))
     private alias UC = Unqual!(C);
 
     /**
+    Construct a `Yarn` from a finite character range.
+
     Params:
         r = A finite input range of any character type.
      */
@@ -40,6 +42,8 @@ if (isSomeChar!(C))
     }
 
     /**
+    Reassign the current data to the given range.
+
     Note:
         Does not manually free the existing GC array.
      */
@@ -60,7 +64,8 @@ if (isSomeChar!(C))
     }
 
     /**
-    Appends the given character or input range to this `Yarn`'s data.
+    Appends the given character or finite character input range to the existing
+    data.
 
     Throws:
         `UTFException` on bad utf data. `OutOfMemory` when allocation fails.
@@ -187,7 +192,7 @@ if (isSomeChar!(C))
     }
 
     /**
-    Allocate space for `newCapacity` elements.
+    Allocate space for at least `newCapacity` elements.
 
     Params:
         newCapacity = total amount of elements that this Yarn
@@ -208,13 +213,13 @@ if (isSomeChar!(C))
     static if (isMutable!C)
     {
         /**
-        Set the Yarn back to small and clear the existing data.
+        Set the Yarn back to small-size optimization mode and clear the existing data.
 
         Disabled when `C` is a non-mutable type, as it may overwrite immutable
         data.
 
         Note:
-            Does not manually free the existing GC array.
+            Does not manually free the GC array if it exists.
          */
         void reset() @nogc pure nothrow
         {
@@ -235,7 +240,9 @@ if (isSomeChar!(C))
     }
 
     /**
-    Returns: The data as a random access range of code units.
+    Returns:
+        The data as a forward range of `chars`. If `is(Unqual!C == char)`,
+        the range will be random access.
      */
     auto byChar() @trusted @nogc pure nothrow
     {
@@ -246,7 +253,9 @@ if (isSomeChar!(C))
     }
 
     /**
-    Returns: The data as a forward range of `wchars`
+    Returns:
+        The data as a forward range of `wchars`. If `is(Unqual!C == wchar)`,
+        the range will be random access.
      */
     auto byWchar() @trusted @nogc pure nothrow
     {
@@ -257,7 +266,9 @@ if (isSomeChar!(C))
     }
 
     /**
-    Returns: The data as a bidirectional range of code points.
+    Returns:
+        The data as a forward range of `dchar`. If `is(Unqual!C == dchar)`,
+        the range will be random access.
      */
     auto byDchar() @trusted pure nothrow
     {
@@ -281,18 +292,18 @@ if (isSomeChar!(C))
     private enum smallCapacity = 31 / C.sizeof;
     private enum small_flag = 0x80, small_mask = 0x7F;
     static if (C.sizeof == 1)
-        enum char[smallCapacity] smallEmpty = [
+        private enum char[smallCapacity] smallEmpty = [
             '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
             '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
             '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
         ];
     else static if (C.sizeof == 2)
-        enum wchar[smallCapacity] smallEmpty = [
+        private enum wchar[smallCapacity] smallEmpty = [
             '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
             '\0', '\0', '\0', '\0', '\0'
         ];
     else static if (C.sizeof == 4)
-        enum dchar[smallCapacity] smallEmpty = [
+        private enum dchar[smallCapacity] smallEmpty = [
             '\0', '\0', '\0', '\0', '\0', '\0', '\0'
         ];
 
@@ -342,7 +353,7 @@ if (isSomeChar!(C))
         }
         else
         {
-            for (int i = 0; i < k; i++)
+            for (int i; i < k; i++)
             {
                 p[i] = small.data[i];
             }
@@ -670,7 +681,7 @@ private struct Range(T, C)
 
         inout(C) opIndex(size_t i) @trusted inout
         {
-            assert(a + i < b);
+            assert(a + i < b, "Index out of bounds on a " ~ T.stringof);
             if (yarnData.isBig)
                 return yarnData.large.ptr[a + i];
             else
@@ -690,7 +701,7 @@ private struct Range(T, C)
         --b;
     }
 
-    auto save() @property
+    auto save() @safe pure nothrow
     {
         return this;
     }
@@ -706,14 +717,14 @@ private struct Range(T, C)
     }
     alias opDollar = length;
 
-    auto opSlice()
+    auto opSlice() @safe pure nothrow
     {
         return typeof(this)(yarnData, a, b);
     }
 
-    auto opSlice(size_t i, size_t j)
+    auto opSlice(size_t i, size_t j) @safe pure nothrow
     {
-        assert(i <= j && a + j <= b);
+        assert(i <= j && a + j <= b, "Slice index out of bounds on a " ~ T.stringof);
         return typeof(this)(yarnData, a + i, a + j);
     }
 }
