@@ -8,20 +8,39 @@ In order to iterate over the data contained in a `Yarn`, the iteration
 method must be chosen first. This is in contrast with `string` which defaults
 to iteration by code point (a.k.a auto-decoding). `Yarn` offers the
 standard `std.utf` and `std.uni` range generating functions: `byCodeUnit`,
-`byCodePoint`, `byChar`, `byWchar`, `byDchar`, and `byGrapheme`.
+`byCodePoint`, `byChar`, `byWchar`, and `byDchar`.
 
 Any iteration or equality comparison of a `Yarn` must therefore explicitly choose
 the method of iteration at every usage. There is no way to get at the underlying
 data other than these methods.
 
-`Yarn` is an `OutputRange` for all `char` types.
+## Benchmark
 
-### Note On Invalid Data
+```
+$ ldc2 -O -release -enable-cross-module-inlining -flto=full bench.d source/yarn.d && ./bench                                                        [11:08:37]
 
-Unlike `string`, `Yarn` will not throw when iterating over invalid UTF data.
+Small String Append
+============================================
+string      351 ms and 612 μs
+yarn        14 ms, 64 μs, and 5 hnsecs
+Appender    221 ms, 495 μs, and 4 hnsecs
 
-The only time a `UTFException` will be thrown is when encoding a character into
-a different character width, e.g. putting a `wchar` or a `dchar` into a `Yarn!(char)`.
+Large String Append
+============================================
+string      276 ms, 31 μs, and 1 hnsec
+yarn        164 ms, 5 μs, and 4 hnsecs
+Appender    260 ms and 627 μs
+
+Small String Sort
+============================================
+string      8 μs
+yarn        3 μs
+
+Large String Sort
+============================================
+string      2 μs and 5 hnsecs
+yarn        8 μs and 1 hnsec
+```
 
 ## Examples
 
@@ -75,6 +94,15 @@ struct Yarn(C) if (isSomeChar!C);
 ```
 
 A safe string type optimized for both small sizes and for appending large amounts of data.
+
+`Yarn` is an `OutputRange` for all `char` types.
+
+##### Note On Invalid Data
+
+Unlike `string`, `Yarn` will not throw when iterating over invalid UTF data.
+
+The only time a `UTFException` will be thrown is when encoding a character into
+a different character width, e.g. putting a `wchar` or a `dchar` into a `Yarn!(char)`.
 
 #### `this`
 
